@@ -73,6 +73,19 @@ namespace NuGet.ProjectModel
             return project;
         }
 
+        public PackageSpec GetProjectSpecFromProjectPath(string projectPath, IDictionary<string, PackageSpec> projectPathToPackageSpec )
+        {
+            if (string.IsNullOrEmpty(projectPath))
+            {
+                throw new ArgumentNullException(nameof(projectPath));
+            }
+
+            PackageSpec project;
+            projectPathToPackageSpec.TryGetValue(projectPath, out project);
+
+            return project;
+        }
+
         public IReadOnlyList<string> GetParents(string rootUniqueName)
         {
             var parents = new List<PackageSpec>();
@@ -121,13 +134,18 @@ namespace NuGet.ProjectModel
                 throw new ArgumentNullException(nameof(rootUniqueName));
             }
 
+            var projectsByPath = new SortedDictionary<string, PackageSpec>(
+                _projects.ToDictionary(t => t.Value?.RestoreMetadata?.ProjectPath, t => t.Value),
+                PathUtility.GetStringComparerBasedOnOS());
+            
             var closure = new List<PackageSpec>();
 
             var added = new SortedSet<string>(StringComparer.Ordinal);
             var toWalk = new Stack<PackageSpec>();
 
             // Start with the root
-            toWalk.Push(GetProjectSpec(rootUniqueName));
+            var projectPath = _projects[rootUniqueName]?.RestoreMetadata?.ProjectPath;
+            toWalk.Push(GetProjectSpecFromProjectPath(projectPath, projectsByPath));
 
             while (toWalk.Count > 0)
             {
@@ -139,7 +157,7 @@ namespace NuGet.ProjectModel
                     closure.Add(spec);
 
                     // Find children
-                    foreach (var projectName in GetProjectReferenceNames(spec))
+                    foreach (var projectName in GetProjectReferenceNames(spec, projectsByPath))
                     {
                         if (added.Add(projectName))
                         {
@@ -152,13 +170,14 @@ namespace NuGet.ProjectModel
             return closure;
         }
 
-        private static IEnumerable<string> GetProjectReferenceNames(PackageSpec spec)
+        private IEnumerable<string> GetProjectReferenceNames(PackageSpec spec, IDictionary<string, PackageSpec> projectsByPath)
         {
             // Handle projects which may not have specs, and which may not have references
             return spec?.RestoreMetadata?
                 .TargetFrameworks
                 .SelectMany(e => e.ProjectReferences)
-                .Select(project => project.ProjectUniqueName)
+                .Select(project => projectsByPath[project.ProjectPath]?.RestoreMetadata?.ProjectUniqueName)
+                .Where(t => !string.IsNullOrEmpty(t))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 ?? Enumerable.Empty<string>();
         }
